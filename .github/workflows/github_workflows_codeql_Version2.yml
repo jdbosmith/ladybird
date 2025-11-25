@@ -1,0 +1,60 @@
+# CodeQL analysis for Ladybird (starting point)
+# Notes:
+# - We disable autobuild and run the project's explicit build command so CodeQL can capture compiler invocations.
+# - You will likely need to adjust / add apt packages or install a specific compiler (clang-20 or gcc-14) depending on the runner.
+# - Building Ladybird in GitHub-hosted runners can be heavy — consider a self-hosted runner or running CodeQL locally if you hit resource/time limits.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up Python (for Meta/ladybird.py)
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install system dependencies (adjust as needed)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ccache cmake curl git ninja-build nasm python3-venv pkg-config \
+            libdrm-dev libgl1-mesa-dev libpulse-dev
+          # Qt dev packages may be required to build the Qt UI; they are optional if you don't enable Qt:
+          sudo apt-get install -y --no-install-recommends qt6-base-dev qt6-wayland-dev || true
+
+      - name: Initialize CodeQL (autobuild disabled)
+        uses: github/codeql-action/init@v2
+        with:
+          languages: cpp
+          autobuild: false
+
+      - name: Prepare Python venv (recommended)
+        shell: bash
+        run: |
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          # If the Meta script has python requirements, install them. If there is no requirements file, this will be skipped.
+          if [ -f Meta/requirements.txt ]; then pip install -r Meta/requirements.txt; fi
+
+      - name: Explicitly build Ladybird (so CodeQL can capture the build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .venv/bin/activate || true
+          # Use the project's build command from the README. Use `build` to avoid trying to run the GUI on the runner.
+          ./Meta/ladybird.py build
+
+      - name: Run CodeQL analysis
+        uses: github/codeql-action/analyze@v2
