@@ -9,7 +9,6 @@
 
 #include <AK/NonnullOwnPtr.h>
 #include <LibGC/Ptr.h>
-#include <LibGfx/Bitmap.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebGL/Types.h>
@@ -88,6 +87,7 @@ public:
     WebIDL::UnsignedLong get_error();
     JS::Value get_program_parameter(GC::Root<WebGLProgram> program, WebIDL::UnsignedLong pname);
     Optional<String> get_program_info_log(GC::Root<WebGLProgram> program);
+    JS::Value get_renderbuffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname);
     JS::Value get_shader_parameter(GC::Root<WebGLShader> shader, WebIDL::UnsignedLong pname);
     GC::Root<WebGLShaderPrecisionFormat> get_shader_precision_format(WebIDL::UnsignedLong shadertype, WebIDL::UnsignedLong precisiontype);
     Optional<String> get_shader_info_log(GC::Root<WebGLShader> shader);
@@ -163,6 +163,7 @@ protected:
     GC::Ptr<WebGLTexture> m_texture_binding_2d_array;
     GC::Ptr<WebGLTexture> m_texture_binding_3d;
     GC::Ptr<WebGLTransformFeedback> m_transform_feedback_binding;
+    GC::Ptr<WebGLVertexArrayObject> m_current_vertex_array;
 
     NonnullOwnPtr<OpenGLContext> m_context;
 };

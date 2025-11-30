@@ -52,6 +52,8 @@ public:
         other.m_impl = { .short_string = ShortString::create_empty() };
     }
 
+    explicit StringBase(NonnullRefPtr<Detail::StringData const>);
+
     StringBase& operator=(StringBase&&);
     StringBase& operator=(StringBase const&);
 
@@ -71,7 +73,8 @@ public:
 
     // Returns the underlying UTF-8 encoded bytes.
     // NOTE: There is no guarantee about null-termination.
-    [[nodiscard]] ReadonlyBytes bytes() const LIFETIME_BOUND;
+    [[nodiscard]] ReadonlyBytes bytes() const&& = delete;
+    [[nodiscard]] ReadonlyBytes bytes() const& LIFETIME_BOUND;
     [[nodiscard]] u32 hash() const;
     [[nodiscard]] size_t byte_count() const;
     [[nodiscard]] ALWAYS_INLINE size_t length_in_code_units() const { return byte_count(); }
@@ -121,8 +124,6 @@ private:
     friend class ::AK::String;
     friend class ::AK::FlyString;
     friend struct ::AK::Detail::ShortString;
-
-    explicit StringBase(NonnullRefPtr<Detail::StringData const>);
 
     explicit constexpr StringBase(nullptr_t)
         : m_impl { .data = nullptr }
@@ -204,7 +205,7 @@ inline size_t ShortString::byte_count() const
     return byte_count_and_short_string_flag >> StringBase::SHORT_STRING_BYTE_COUNT_SHIFT_COUNT;
 }
 
-inline ReadonlyBytes StringBase::bytes() const
+inline ReadonlyBytes StringBase::bytes() const&
 {
     if (is_short_string())
         return m_impl.short_string.bytes();

@@ -11,10 +11,10 @@
 #include <AK/MemoryStream.h>
 #include <AK/Optional.h>
 #include <AK/Time.h>
-#include <AK/Weakable.h>
 #include <LibCore/Proxy.h>
 #include <LibDNS/Resolver.h>
-#include <LibHTTP/HeaderMap.h>
+#include <LibHTTP/Cache/CacheRequest.h>
+#include <LibHTTP/HeaderList.h>
 #include <LibRequests/NetworkError.h>
 #include <LibRequests/RequestTimingInfo.h>
 #include <LibURL/URL.h>
@@ -26,17 +26,17 @@ struct curl_slist;
 
 namespace RequestServer {
 
-class Request : public Weakable<Request> {
+class Request : public HTTP::CacheRequest {
 public:
     static NonnullOwnPtr<Request> fetch(
         i32 request_id,
-        Optional<DiskCache&> disk_cache,
+        Optional<HTTP::DiskCache&> disk_cache,
         ConnectionFromClient& client,
         void* curl_multi,
         Resolver& resolver,
         URL::URL url,
         ByteString method,
-        HTTP::HeaderMap request_headers,
+        NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
         ByteString alt_svc_cache_path,
         Core::ProxyData proxy_data);
@@ -49,15 +49,14 @@ public:
         URL::URL url,
         CacheLevel cache_level);
 
-    ~Request();
+    virtual ~Request() override;
 
     URL::URL const& url() const { return m_url; }
     ByteString const& method() const { return m_method; }
-    HTTP::HeaderMap const& request_headers() const { return m_request_headers; }
+    HTTP::HeaderList const& request_headers() const { return m_request_headers; }
     UnixDateTime request_start_time() const { return m_request_start_time; }
-    AK::Duration current_time_offset_for_testing() const { return m_current_time_offset_for_testing; }
 
-    void notify_request_unblocked(Badge<DiskCache>);
+    virtual void notify_request_unblocked(Badge<HTTP::DiskCache>) override;
     void notify_fetch_complete(Badge<ConnectionFromClient>, int result_code);
 
 private:
@@ -77,22 +76,15 @@ private:
         Error,        // Any error occured during the request's lifetime.
     };
 
-    enum class CacheStatus : u8 {
-        Unknown,
-        NotCached,
-        WrittenToCache,
-        ReadFromCache,
-    };
-
     Request(
         i32 request_id,
-        Optional<DiskCache&> disk_cache,
+        Optional<HTTP::DiskCache&> disk_cache,
         ConnectionFromClient& client,
         void* curl_multi,
         Resolver& resolver,
         URL::URL url,
         ByteString method,
-        HTTP::HeaderMap request_headers,
+        NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
         ByteString alt_svc_cache_path,
         Core::ProxyData proxy_data);
@@ -132,7 +124,7 @@ private:
     Type m_type { Type::Fetch };
     State m_state { State::Init };
 
-    Optional<DiskCache&> m_disk_cache;
+    Optional<HTTP::DiskCache&> m_disk_cache;
     ConnectionFromClient& m_client;
 
     void* m_curl_multi_handle { nullptr };
@@ -147,7 +139,7 @@ private:
     ByteString m_method;
 
     UnixDateTime m_request_start_time { UnixDateTime::now() };
-    HTTP::HeaderMap m_request_headers;
+    NonnullRefPtr<HTTP::HeaderList> m_request_headers;
     ByteBuffer m_request_body;
 
     ByteString m_alt_svc_cache_path;
@@ -156,7 +148,7 @@ private:
     u32 m_status_code { 0 };
     Optional<String> m_reason_phrase;
 
-    HTTP::HeaderMap m_response_headers;
+    NonnullRefPtr<HTTP::HeaderList> m_response_headers;
     bool m_sent_response_headers_to_client { false };
 
     AllocatingMemoryStream m_response_buffer;
@@ -164,13 +156,7 @@ private:
     Optional<RequestPipe> m_client_request_pipe;
     size_t m_bytes_transferred_to_client { 0 };
 
-    Optional<CacheEntryReader&> m_cache_entry_reader;
-    Optional<CacheEntryWriter&> m_cache_entry_writer;
-    CacheStatus m_cache_status { CacheStatus::Unknown };
-
     Optional<Requests::NetworkError> m_network_error;
-
-    AK::Duration m_current_time_offset_for_testing;
 };
 
 }

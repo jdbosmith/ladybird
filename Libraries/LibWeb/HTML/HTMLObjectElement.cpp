@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGfx/Bitmap.h>
+#include <LibGfx/ImmutableBitmap.h>
 #include <LibWeb/Bindings/HTMLObjectElementPrototype.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleComputer.h>
@@ -18,6 +18,7 @@
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/HTML/DecodedImageData.h>
 #include <LibWeb/HTML/HTMLMediaElement.h>
@@ -361,7 +362,7 @@ void HTMLObjectElement::resource_did_load(Fetch::Infrastructure::Response const&
 
     // 3. Run the appropriate set of steps from the following list:
     // -> If the resource has associated Content-Type metadata
-    if (auto content_type = response.header_list()->extract_mime_type(); content_type.has_value()) {
+    if (auto content_type = Fetch::Infrastructure::extract_mime_type(response.header_list()); content_type.has_value()) {
         // 1. Let binary be false.
         bool binary = false;
 

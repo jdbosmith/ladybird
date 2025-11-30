@@ -156,35 +156,6 @@ ErrorOr<String> convert_to_scalar_value_string(StringView string)
     return scalar_value_builder.to_string();
 }
 
-// https://infra.spec.whatwg.org/#isomorphic-encode
-ByteBuffer isomorphic_encode(StringView input)
-{
-    // To isomorphic encode an isomorphic string input: return a byte sequence whose length is equal to input’s code
-    // point length and whose bytes have the same values as the values of input’s code points, in the same order.
-    // NOTE: This is essentially spec-speak for "Encode as ISO-8859-1 / Latin-1".
-    ByteBuffer buf = {};
-    for (auto code_point : Utf8View { input }) {
-        // VERIFY(code_point <= 0xFF);
-        if (code_point > 0xFF)
-            dbgln("FIXME: Trying to isomorphic encode a string with code points > U+00FF.");
-        buf.append((u8)code_point);
-    }
-    return buf;
-}
-
-// https://infra.spec.whatwg.org/#isomorphic-decode
-String isomorphic_decode(ReadonlyBytes input)
-{
-    // To isomorphic decode a byte sequence input, return a string whose code point length is equal
-    // to input’s length and whose code points have the same values as the values of input’s bytes, in the same order.
-    // NOTE: This is essentially spec-speak for "Decode as ISO-8859-1 / Latin-1".
-    StringBuilder builder(input.size());
-    for (u8 code_point : input) {
-        builder.append_code_point(code_point);
-    }
-    return builder.to_string_without_validation();
-}
-
 // https://infra.spec.whatwg.org/#code-unit-less-than
 bool code_unit_less_than(StringView a, StringView b)
 {

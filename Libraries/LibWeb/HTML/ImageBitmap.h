@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/OwnPtr.h>
-#include <LibGfx/Bitmap.h>
+#include <LibGfx/Forward.h>
 #include <LibWeb/Bindings/ImageBitmapPrototype.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Bindings/Serializable.h>
@@ -35,7 +35,7 @@ class ImageBitmap final : public Bindings::PlatformObject
 
 public:
     static GC::Ref<ImageBitmap> create(JS::Realm&);
-    virtual ~ImageBitmap() override = default;
+    virtual ~ImageBitmap() override;
 
     // ^Web::Bindings::Serializable
     virtual HTML::SerializeType serialize_type() const override { return HTML::SerializeType::ImageBitmap; }
@@ -70,7 +70,7 @@ private:
     WebIDL::UnsignedLong m_width = 0;
     WebIDL::UnsignedLong m_height = 0;
 
-    RefPtr<Gfx::Bitmap> m_bitmap { nullptr };
+    RefPtr<Gfx::Bitmap> m_bitmap;
 };
 
 }

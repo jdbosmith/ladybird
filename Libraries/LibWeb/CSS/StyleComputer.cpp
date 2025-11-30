@@ -23,6 +23,7 @@
 #include <LibGfx/Font/Typeface.h>
 #include <LibGfx/Font/WOFF/Loader.h>
 #include <LibGfx/Font/WOFF2/Loader.h>
+#include <LibWeb/Animations/Animatable.h>
 #include <LibWeb/Animations/AnimationEffect.h>
 #include <LibWeb/Animations/DocumentTimeline.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
@@ -82,6 +83,7 @@
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Response.h>
 #include <LibWeb/HTML/HTMLBRElement.h>
 #include <LibWeb/HTML/HTMLHtmlElement.h>
@@ -309,7 +311,7 @@ void FontLoader::font_did_load_or_fail(RefPtr<Gfx::Typeface const> typeface)
 ErrorOr<NonnullRefPtr<Gfx::Typeface const>> FontLoader::try_load_font(Fetch::Infrastructure::Response const& response, ByteBuffer const& bytes)
 {
     // FIXME: This could maybe use the format() provided in @font-face as well, since often the mime type is just application/octet-stream and we have to try every format
-    auto mime_type = response.header_list()->extract_mime_type();
+    auto mime_type = Fetch::Infrastructure::extract_mime_type(response.header_list());
     if (!mime_type.has_value() || !mime_type->is_font()) {
         mime_type = MimeSniff::Resource::sniff(bytes, MimeSniff::SniffingConfiguration { .sniffing_context = MimeSniff::SniffingContext::Font });
     }
@@ -950,7 +952,7 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
                 auto const& specified_value_with_css_wide_keywords_applied = [&]() -> StyleValue const& {
                     if (longhand_value.is_inherit() || (longhand_value.is_unset() && is_inherited_property(longhand_id))) {
                         if (auto inherited_animated_value = get_animated_inherit_value(longhand_id, abstract_element); inherited_animated_value.has_value())
-                            return inherited_animated_value.value();
+                            return inherited_animated_value->value;
 
                         return get_non_animated_inherit_value(longhand_id, abstract_element);
                     }
@@ -1070,6 +1072,8 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
         VERIFY_NOT_REACHED();
     };
 
+    auto is_result_of_transition = animation->is_css_transition() ? AnimatedPropertyResultOfTransition::Yes : AnimatedPropertyResultOfTransition::No;
+
     auto start_composite_operation = to_composite_operation(keyframe_values.composite);
     auto end_composite_operation = to_composite_operation(keyframe_end_values.composite);
 
@@ -1079,7 +1083,7 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
 
         if (!resolved_end_property) {
             if (resolved_start_property) {
-                computed_properties.set_animated_property(it.key, *resolved_start_property);
+                computed_properties.set_animated_property(it.key, *resolved_start_property, is_result_of_transition);
                 dbgln_if(LIBWEB_CSS_ANIMATION_DEBUG, "No end property for property {}, using {}", string_from_property_id(it.key), resolved_start_property->to_string(SerializationMode::Normal));
             }
             continue;
@@ -1094,7 +1098,9 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
         auto start = resolved_start_property.release_nonnull();
         auto end = resolved_end_property.release_nonnull();
 
-        if (computed_properties.is_property_important(it.key)) {
+        // OPTIMIZATION: Values resulting from animations other than CSS transitions are overriden by important
+        //               properties so there's no need to calculate them
+        if (!animation->is_css_transition() && computed_properties.is_property_important(it.key)) {
             continue;
         }
 
@@ -1107,11 +1113,11 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
 
         if (auto next_value = interpolate_property(*effect->target(), it.key, *start, *end, progress_in_keyframe, AllowDiscrete::Yes)) {
             dbgln_if(LIBWEB_CSS_ANIMATION_DEBUG, "Interpolated value for property {} at {}: {} -> {} = {}", string_from_property_id(it.key), progress_in_keyframe, start->to_string(SerializationMode::Normal), end->to_string(SerializationMode::Normal), next_value->to_string(SerializationMode::Normal));
-            computed_properties.set_animated_property(it.key, *next_value);
+            computed_properties.set_animated_property(it.key, *next_value, is_result_of_transition);
         } else {
             // If interpolate_property() fails, the element should not be rendered
             dbgln_if(LIBWEB_CSS_ANIMATION_DEBUG, "Interpolated value for property {} at {}: {} -> {} is invalid", string_from_property_id(it.key), progress_in_keyframe, start->to_string(SerializationMode::Normal), end->to_string(SerializationMode::Normal));
-            computed_properties.set_animated_property(PropertyID::Visibility, KeywordStyleValue::create(Keyword::Hidden));
+            computed_properties.set_animated_property(PropertyID::Visibility, KeywordStyleValue::create(Keyword::Hidden), is_result_of_transition);
         }
     }
 }
@@ -1606,7 +1612,7 @@ NonnullRefPtr<StyleValue const> StyleComputer::get_non_animated_inherit_value(Pr
     return parent_element->computed_properties()->property(property_id, ComputedProperties::WithAnimationsApplied::No);
 }
 
-Optional<NonnullRefPtr<StyleValue const>> StyleComputer::get_animated_inherit_value(PropertyID property_id, DOM::AbstractElement abstract_element)
+Optional<StyleComputer::AnimatedInheritValue> StyleComputer::get_animated_inherit_value(PropertyID property_id, DOM::AbstractElement abstract_element)
 {
     auto parent_element = abstract_element.element_to_inherit_style_from();
 
@@ -1614,7 +1620,12 @@ Optional<NonnullRefPtr<StyleValue const>> StyleComputer::get_animated_inherit_va
         return {};
 
     if (auto animated_value = parent_element->computed_properties()->animated_property_values().get(property_id); animated_value.has_value())
-        return *animated_value.value();
+        return AnimatedInheritValue {
+            .value = *animated_value.value(),
+            .is_result_of_transition = parent_element->computed_properties()->is_animated_property_result_of_transition(property_id)
+                ? AnimatedPropertyResultOfTransition::Yes
+                : AnimatedPropertyResultOfTransition::No
+        };
 
     return {};
 }
@@ -2523,7 +2534,6 @@ GC::Ref<ComputedProperties> StyleComputer::compute_properties(DOM::AbstractEleme
         auto property_id = static_cast<CSS::PropertyID>(i);
         auto value = cascaded_properties.property(property_id);
         auto inherited = ComputedProperties::Inherited::No;
-        Optional<NonnullRefPtr<StyleValue const>> animated_value;
 
         // NOTE: We've already handled font-size above.
         if (property_id == PropertyID::FontSize && !value && new_font_size)
@@ -2545,17 +2555,17 @@ GC::Ref<ComputedProperties> StyleComputer::compute_properties(DOM::AbstractEleme
 
         // FIXME: Logical properties should inherit from their parent's equivalent unmapped logical property.
         if (should_inherit) {
-            value = get_non_animated_inherit_value(property_id, abstract_element);
-            animated_value = get_animated_inherit_value(property_id, abstract_element);
             inherited = ComputedProperties::Inherited::Yes;
+            value = get_non_animated_inherit_value(property_id, abstract_element);
+
+            if (auto animated_value = get_animated_inherit_value(property_id, abstract_element); animated_value.has_value())
+                computed_style->set_animated_property(property_id, animated_value->value, animated_value->is_result_of_transition, ComputedProperties::Inherited::Yes);
         }
 
         if (!value || value->is_initial() || value->is_unset())
             value = property_initial_value(property_id);
 
         computed_style->set_property(property_id, value.release_nonnull(), inherited, cascaded_properties.is_property_important(property_id) ? Important::Yes : Important::No);
-        if (animated_value.has_value())
-            computed_style->set_animated_property(property_id, animated_value.value(), inherited);
     }
 
     // Compute the value of custom properties
@@ -2573,7 +2583,9 @@ GC::Ref<ComputedProperties> StyleComputer::compute_properties(DOM::AbstractEleme
     // 5. Add or modify CSS-defined animations
     process_animation_definitions(computed_style, abstract_element);
 
-    auto animations = abstract_element.element().get_animations_internal(Animations::GetAnimationsOptions { .subtree = false });
+    auto animations = abstract_element.element().get_animations_internal(
+        Animations::Animatable::GetAnimationsSorted::Yes,
+        Animations::GetAnimationsOptions { .subtree = false });
     if (animations.is_exception()) {
         dbgln("Error getting animations for element {}", abstract_element.debug_description());
     } else {

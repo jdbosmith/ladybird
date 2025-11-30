@@ -7,6 +7,7 @@
 #include <AK/Array.h>
 #include <LibGC/Heap.h>
 #include <LibJS/Runtime/Realm.h>
+#include <LibTextCodec/Encoder.h>
 #include <LibWeb/ContentSecurityPolicy/Directives/Names.h>
 #include <LibWeb/ContentSecurityPolicy/PolicyList.h>
 #include <LibWeb/ContentSecurityPolicy/Violation.h>
@@ -19,15 +20,19 @@ namespace Web::Fetch::Infrastructure {
 
 GC_DEFINE_ALLOCATOR(Request);
 
-Request::Request(GC::Ref<HeaderList> header_list)
-    : m_header_list(header_list)
+GC::Ref<Request> Request::create(JS::VM& vm)
+{
+    return vm.heap().allocate<Request>(HTTP::HeaderList::create());
+}
+
+Request::Request(NonnullRefPtr<HTTP::HeaderList> header_list)
+    : m_header_list(move(header_list))
 {
 }
 
 void Request::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(m_header_list);
     visitor.visit(m_client);
     m_body.visit(
         [&](GC::Ref<Body>& body) { visitor.visit(body); },
@@ -41,11 +46,6 @@ void Request::visit_edges(JS::Cell::Visitor& visitor)
     m_policy_container.visit(
         [&](GC::Ref<HTML::PolicyContainer> const& policy_container) { visitor.visit(policy_container); },
         [](auto const&) {});
-}
-
-GC::Ref<Request> Request::create(JS::VM& vm)
-{
-    return vm.heap().allocate<Request>(HeaderList::create(vm));
 }
 
 // https://fetch.spec.whatwg.org/#concept-request-url
@@ -212,10 +212,11 @@ String Request::serialize_origin() const
 }
 
 // https://fetch.spec.whatwg.org/#byte-serializing-a-request-origin
-ByteBuffer Request::byte_serialize_origin() const
+ByteString Request::byte_serialize_origin() const
 {
-    // Byte-serializing a request origin, given a request request, is to return the result of serializing a request origin with request, isomorphic encoded.
-    return MUST(ByteBuffer::copy(serialize_origin().bytes()));
+    // Byte-serializing a request origin, given a request request, is to return the result of serializing a request
+    // origin with request, isomorphic encoded.
+    return TextCodec::isomorphic_encode(serialize_origin());
 }
 
 // https://fetch.spec.whatwg.org/#concept-request-clone
@@ -282,24 +283,15 @@ void Request::add_range_header(u64 first, Optional<u64> const& last)
     VERIFY(!last.has_value() || first <= last.value());
 
     // 2. Let rangeValue be `bytes=`.
-    auto range_value = MUST(ByteBuffer::copy("bytes"sv.bytes()));
-
     // 3. Serialize and isomorphic encode first, and append the result to rangeValue.
-    range_value.append(String::number(first).bytes());
-
     // 4. Append 0x2D (-) to rangeValue.
-    range_value.append('-');
-
     // 5. If last is given, then serialize and isomorphic encode it, and append the result to rangeValue.
-    if (last.has_value())
-        range_value.append(String::number(*last).bytes());
+    auto range_value = last.has_value()
+        ? ByteString::formatted("bytes={}-{}", first, *last)
+        : ByteString::formatted("bytes={}-", first);
 
     // 6. Append (`Range`, rangeValue) to request’s header list.
-    auto header = Header {
-        .name = MUST(ByteBuffer::copy("Range"sv.bytes())),
-        .value = move(range_value),
-    };
-    m_header_list->append(move(header));
+    m_header_list->append({ "Range"sv, move(range_value) });
 }
 
 // https://fetch.spec.whatwg.org/#append-a-request-origin-header
@@ -310,21 +302,17 @@ void Request::add_origin_header()
 
     // 2. If request’s response tainting is "cors" or request’s mode is "websocket", then append (`Origin`, serializedOrigin) to request’s header list.
     if (m_response_tainting == ResponseTainting::CORS || m_mode == Mode::WebSocket) {
-        auto header = Header {
-            .name = MUST(ByteBuffer::copy("Origin"sv.bytes())),
-            .value = move(serialized_origin),
-        };
-        m_header_list->append(move(header));
+        m_header_list->append({ "Origin"sv, move(serialized_origin) });
     }
     // 3. Otherwise, if request’s method is neither `GET` nor `HEAD`, then:
-    else if (!StringView { m_method }.is_one_of("GET"sv, "HEAD"sv)) {
+    else if (!m_method.is_one_of("GET"sv, "HEAD"sv)) {
         // 1. If request’s mode is not "cors", then switch on request’s referrer policy:
         if (m_mode != Mode::CORS) {
             switch (m_referrer_policy) {
             // -> "no-referrer"
             case ReferrerPolicy::ReferrerPolicy::NoReferrer:
                 // Set serializedOrigin to `null`.
-                serialized_origin = MUST(ByteBuffer::copy("null"sv.bytes()));
+                serialized_origin = "null"sv;
                 break;
             // -> "no-referrer-when-downgrade"
             // -> "strict-origin"
@@ -335,14 +323,14 @@ void Request::add_origin_header()
                 // If request’s origin is a tuple origin, its scheme is "https", and request’s current URL’s scheme is
                 // not "https", then set serializedOrigin to `null`.
                 if (m_origin.has<URL::Origin>() && !m_origin.get<URL::Origin>().is_opaque() && m_origin.get<URL::Origin>().scheme() == "https"sv && current_url().scheme() != "https"sv)
-                    serialized_origin = MUST(ByteBuffer::copy("null"sv.bytes()));
+                    serialized_origin = "null"sv;
                 break;
             // -> "same-origin"
             case ReferrerPolicy::ReferrerPolicy::SameOrigin:
                 // If request’s origin is not same origin with request’s current URL’s origin, then set serializedOrigin
                 // to `null`.
                 if (m_origin.has<URL::Origin>() && !m_origin.get<URL::Origin>().is_same_origin(current_url().origin()))
-                    serialized_origin = MUST(ByteBuffer::copy("null"sv.bytes()));
+                    serialized_origin = "null"sv;
                 break;
             // -> Otherwise
             default:
@@ -352,11 +340,7 @@ void Request::add_origin_header()
         }
 
         // 2. Append (`Origin`, serializedOrigin) to request’s header list.
-        auto header = Header {
-            .name = MUST(ByteBuffer::copy("Origin"sv.bytes())),
-            .value = move(serialized_origin),
-        };
-        m_header_list->append(move(header));
+        m_header_list->append({ "Origin"sv, move(serialized_origin) });
     }
 }
 

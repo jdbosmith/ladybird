@@ -11,12 +11,12 @@
 #include <AK/ByteBuffer.h>
 #include <AK/RefCounted.h>
 #include <AK/Weakable.h>
+#include <LibHTTP/HeaderList.h>
 #include <LibURL/URL.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/DOMURL/URLSearchParams.h>
 #include <LibWeb/Fetch/BodyInit.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Bodies.h>
-#include <LibWeb/Fetch/Infrastructure/HTTP/Headers.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Statuses.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/MimeSniff/MimeType.h>
@@ -58,7 +58,7 @@ public:
     WebIDL::ExceptionOr<void> open(String const& method, String const& url, bool async, Optional<String> const& username = Optional<String> {}, Optional<String> const& password = Optional<String> {});
     WebIDL::ExceptionOr<void> send(Optional<DocumentOrXMLHttpRequestBodyInit> body);
 
-    WebIDL::ExceptionOr<void> set_request_header(String const& header, String const& value);
+    WebIDL::ExceptionOr<void> set_request_header(String const& name, String const& value);
     WebIDL::ExceptionOr<void> set_response_type(Bindings::XMLHttpRequestResponseType);
 
     Optional<String> get_response_header(String const& name) const;
@@ -95,7 +95,7 @@ private:
     WebIDL::ExceptionOr<void> handle_errors();
     JS::ThrowCompletionOr<void> request_error_steps(FlyString const& event_name, GC::Ptr<WebIDL::DOMException> exception = nullptr);
 
-    XMLHttpRequest(JS::Realm&, XMLHttpRequestUpload&, Fetch::Infrastructure::HeaderList&, Fetch::Infrastructure::Response&, Fetch::Infrastructure::FetchController&);
+    XMLHttpRequest(JS::Realm&, XMLHttpRequestUpload&, NonnullRefPtr<HTTP::HeaderList>, Fetch::Infrastructure::Response&, Fetch::Infrastructure::FetchController&);
 
     // https://xhr.spec.whatwg.org/#upload-object
     // upload object
@@ -135,7 +135,7 @@ private:
     // https://xhr.spec.whatwg.org/#author-request-headers
     // author request headers
     //     A header list, initially empty.
-    GC::Ref<Fetch::Infrastructure::HeaderList> m_author_request_headers;
+    NonnullRefPtr<HTTP::HeaderList> m_author_request_headers;
 
     // https://xhr.spec.whatwg.org/#request-body
     // request body

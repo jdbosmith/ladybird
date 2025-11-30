@@ -23,6 +23,7 @@
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/NativeFunction.h>
+#include <LibTextCodec/Decoder.h>
 #include <LibURL/Origin.h>
 #include <LibURL/Parser.h>
 #include <LibUnicode/Segmenter.h>
@@ -349,7 +350,7 @@ WebIDL::ExceptionOr<GC::Ref<Document>> Document::create_and_initialize(Type type
     DOM::DocumentLoadTimingInfo load_timing_info;
     // AD-HOC: The response object no longer has an associated timing info object. For now, we use response's non-standard response time property,
     //         which represents the time that the time that the response object was created.
-    auto response_creation_time = navigation_params.response->response_time().nanoseconds() / 1e6;
+    auto response_creation_time = navigation_params.response->monotonic_response_time().nanoseconds() / 1e6;
     load_timing_info.navigation_start_time = HighResolutionTime::coarsen_time(response_creation_time, HTML::relevant_settings_object(*window).cross_origin_isolated_capability() == HTML::CanUseCrossOriginIsolatedAPIs::Yes);
 
     // 9. Let document be a new Document, with
@@ -385,15 +386,15 @@ WebIDL::ExceptionOr<GC::Ref<Document>> Document::create_and_initialize(Type type
     document->m_window = window;
 
     // NOTE: Non-standard: Pull out the Last-Modified header for use in the lastModified property.
-    if (auto maybe_last_modified = navigation_params.response->header_list()->get("Last-Modified"sv.bytes()); maybe_last_modified.has_value()) {
+    if (auto maybe_last_modified = navigation_params.response->header_list()->get("Last-Modified"sv); maybe_last_modified.has_value()) {
         // rfc9110, 8.8.2: The Last-Modified header field must be in GMT time zone.
         // document->m_last_modified is in local time zone.
         document->m_last_modified = AK::UnixDateTime::parse("%a, %d %b %Y %H:%M:%S GMT"sv, maybe_last_modified.value(), true);
     }
 
     // NOTE: Non-standard: Pull out the Content-Language header to determine the document's language.
-    if (auto maybe_http_content_language = navigation_params.response->header_list()->get("Content-Language"sv.bytes()); maybe_http_content_language.has_value()) {
-        if (auto maybe_content_language = String::from_utf8(maybe_http_content_language.value()); !maybe_content_language.is_error())
+    if (auto maybe_http_content_language = navigation_params.response->header_list()->get("Content-Language"sv); maybe_http_content_language.has_value()) {
+        if (auto maybe_content_language = String::from_byte_string(maybe_http_content_language.value()); !maybe_content_language.is_error())
             document->m_http_content_language = maybe_content_language.release_value();
     }
 
@@ -423,9 +424,9 @@ WebIDL::ExceptionOr<GC::Ref<Document>> Document::create_and_initialize(Type type
     //            navigationParams's response's service worker timing info.
 
     // 15. If navigationParams's response has a `Refresh` header, then:
-    if (auto maybe_refresh = navigation_params.response->header_list()->get("Refresh"sv.bytes()); maybe_refresh.has_value()) {
+    if (auto maybe_refresh = navigation_params.response->header_list()->get("Refresh"sv); maybe_refresh.has_value()) {
         // 1. Let value be the isomorphic decoding of the value of the header.
-        auto value = Infra::isomorphic_decode(maybe_refresh.value());
+        auto value = TextCodec::isomorphic_decode(maybe_refresh.value());
 
         // 2. Run the shared declarative refresh steps with document and value.
         document->shared_declarative_refresh_steps(value, nullptr);
@@ -4026,14 +4027,17 @@ Vector<GC::Root<HTML::Navigable>> Document::document_tree_child_navigables()
 
     // 3. Let navigableContainers be a list of all descendants of document that are navigable containers, in tree order.
     // 4. For each navigableContainer of navigableContainers:
-    for_each_in_subtree_of_type<HTML::NavigableContainer>([&](HTML::NavigableContainer& navigable_container) {
-        // 1. If navigableContainer's content navigable is null, then continue.
-        if (!navigable_container.content_navigable())
-            return TraversalDecision::Continue;
-        // 2. Append navigableContainer's content navigable to navigables.
-        navigables.append(*navigable_container.content_navigable());
-        return TraversalDecision::Continue;
-    });
+    //     1. If navigableContainer's content navigable is null, then continue.
+    //     2. Append navigableContainer's content navigable to navigables.
+    // OPTIMIZATION: Iterate all registered navigables to avoid a full tree traversal.
+    for (auto const& navigable : HTML::all_navigables()) {
+        auto container = navigable->container();
+        if (!container || !is_ancestor_of(*container))
+            continue;
+        navigables.insert_before_matching(*navigable, [&](auto const& existing_navigable) {
+            return container->is_before(*existing_navigable->container());
+        });
+    }
 
     // 5. Return navigables.
     return navigables;
@@ -4496,25 +4500,31 @@ void Document::decrement_throw_on_dynamic_markup_insertion_counter(Badge<HTML::H
 // https://html.spec.whatwg.org/multipage/scripting.html#appropriate-template-contents-owner-document
 GC::Ref<DOM::Document> Document::appropriate_template_contents_owner_document()
 {
-    // 1. If doc is not a Document created by this algorithm, then:
+    // 1. If document is not a Document created by this algorithm:
     if (!created_for_appropriate_template_contents()) {
-        // 1. If doc does not yet have an associated inert template document, then:
+        // 1. If document does not yet have an associated inert template document:
         if (!m_associated_inert_template_document) {
-            // 1. Let new doc be a new Document (whose browsing context is null). This is "a Document created by this algorithm" for the purposes of the step above.
+            // 1. Let newDocument be a new Document (whose browsing context is null). This is "a Document created by
+            //    this algorithm" for the purposes of the step above.
             auto new_document = HTML::HTMLDocument::create(realm());
             new_document->m_created_for_appropriate_template_contents = true;
 
-            // 2. If doc is an HTML document, mark new doc as an HTML document also.
+            // 2. If document is an HTML document, then mark newDocument as an HTML document also.
             if (document_type() == Type::HTML)
                 new_document->set_document_type(Type::HTML);
 
-            // 3. Set doc's associated inert template document to new doc.
+            // AD-HOC: Copy over the "allow declarative shadow roots" flag, otherwise no elements inside templates will
+            //         be able to have declarative shadow roots.
+            // Spec issue: https://github.com/whatwg/html/issues/11955
+            new_document->set_allow_declarative_shadow_roots(allow_declarative_shadow_roots());
+
+            // 3. Set document's associated inert template document to newDocument.
             m_associated_inert_template_document = new_document;
         }
-        // 2. Set doc to doc's associated inert template document.
+        // 2. Set document to document's associated inert template document.
         return *m_associated_inert_template_document;
     }
-    // 2. Return doc.
+    // 2. Return document.
     return *this;
 }
 
@@ -5449,6 +5459,7 @@ void Document::remove_replaced_animations()
 
 WebIDL::ExceptionOr<Vector<GC::Ref<Animations::Animation>>> Document::get_animations()
 {
+    update_style();
     return calculate_get_animations(*this);
 }
 

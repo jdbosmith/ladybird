@@ -257,7 +257,7 @@ ThrowCompletionOr<bool> Value::is_array(VM& vm) const
 
 Array& Value::as_array()
 {
-    VERIFY(is_object() && is<Array>(as_object()));
+    ASSERT(is_object() && is<Array>(as_object()));
     return static_cast<Array&>(as_object());
 }
 
@@ -272,13 +272,13 @@ bool Value::is_function() const
 
 FunctionObject& Value::as_function()
 {
-    VERIFY(is_function());
+    ASSERT(is_function());
     return static_cast<FunctionObject&>(as_object());
 }
 
 FunctionObject const& Value::as_function() const
 {
-    VERIFY(is_function());
+    ASSERT(is_function());
     return static_cast<FunctionObject const&>(as_object());
 }
 
@@ -386,6 +386,8 @@ String Value::to_string_without_side_effects() const
     case EMPTY_TAG:
         return "<empty>"_string;
     default:
+        if (is_cell())
+            return String::formatted("[internal object {}]", as_cell().class_name()).release_value();
         VERIFY_NOT_REACHED();
     }
 }
@@ -417,6 +419,8 @@ Utf16String Value::to_utf16_string_without_side_effects() const
     case EMPTY_TAG:
         return "<empty>"_utf16;
     default:
+        if (is_cell())
+            return Utf16String::formatted("[internal object {}]", as_cell().class_name());
         VERIFY_NOT_REACHED();
     }
 }
@@ -2395,12 +2399,22 @@ ThrowCompletionOr<bool> is_loosely_equal(VM& vm, Value lhs, Value rhs)
     // B.3.6.2 Changes to IsLooselyEqual, https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot-aec
     // 4. Perform the following steps:
     // a. If Type(x) is Object and x has an [[IsHTMLDDA]] internal slot and y is either null or undefined, return true.
-    if (lhs.is_object() && lhs.as_object().is_htmldda() && rhs.is_nullish())
-        return true;
+    if (lhs.is_object() && rhs.is_nullish()) {
+        if (lhs.as_object().is_htmldda())
+            return true;
+
+        // OPTIMIZATION: We can return early here since non-HTMLDDA objects and nullish values are never equal.
+        return false;
+    }
 
     // b. If x is either null or undefined and Type(y) is Object and y has an [[IsHTMLDDA]] internal slot, return true.
-    if (lhs.is_nullish() && rhs.is_object() && rhs.as_object().is_htmldda())
-        return true;
+    if (lhs.is_nullish() && rhs.is_object()) {
+        if (rhs.as_object().is_htmldda())
+            return true;
+
+        // OPTIMIZATION: We can return early here since non-HTMLDDA objects and nullish values are never equal.
+        return false;
+    }
 
     // == End of B.3.6.2 ==
 

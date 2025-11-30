@@ -5,13 +5,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Enumerate.h>
 #include <AK/GenericShorthands.h>
 #include <LibCore/Notifier.h>
+#include <LibHTTP/Cache/DiskCache.h>
+#include <LibHTTP/Cache/Utilities.h>
 #include <LibTextCodec/Decoder.h>
 #include <RequestServer/CURL.h>
-#include <RequestServer/Cache/DiskCache.h>
-#include <RequestServer/Cache/Utilities.h>
 #include <RequestServer/ConnectionFromClient.h>
 #include <RequestServer/Request.h>
 #include <RequestServer/Resolver.h>
@@ -22,13 +21,13 @@ static long s_connect_timeout_seconds = 90L;
 
 NonnullOwnPtr<Request> Request::fetch(
     i32 request_id,
-    Optional<DiskCache&> disk_cache,
+    Optional<HTTP::DiskCache&> disk_cache,
     ConnectionFromClient& client,
     void* curl_multi,
     Resolver& resolver,
     URL::URL url,
     ByteString method,
-    HTTP::HeaderMap request_headers,
+    NonnullRefPtr<HTTP::HeaderList> request_headers,
     ByteBuffer request_body,
     ByteString alt_svc_cache_path,
     Core::ProxyData proxy_data)
@@ -63,13 +62,13 @@ NonnullOwnPtr<Request> Request::connect(
 
 Request::Request(
     i32 request_id,
-    Optional<DiskCache&> disk_cache,
+    Optional<HTTP::DiskCache&> disk_cache,
     ConnectionFromClient& client,
     void* curl_multi,
     Resolver& resolver,
     URL::URL url,
     ByteString method,
-    HTTP::HeaderMap request_headers,
+    NonnullRefPtr<HTTP::HeaderList> request_headers,
     ByteBuffer request_body,
     ByteString alt_svc_cache_path,
     Core::ProxyData proxy_data)
@@ -85,9 +84,8 @@ Request::Request(
     , m_request_body(move(request_body))
     , m_alt_svc_cache_path(move(alt_svc_cache_path))
     , m_proxy_data(proxy_data)
-    , m_current_time_offset_for_testing(compute_current_time_offset_for_testing(m_disk_cache, m_request_headers))
+    , m_response_headers(HTTP::HeaderList::create())
 {
-    m_request_start_time += m_current_time_offset_for_testing;
 }
 
 Request::Request(
@@ -102,9 +100,9 @@ Request::Request(
     , m_curl_multi_handle(curl_multi)
     , m_resolver(resolver)
     , m_url(move(url))
-    , m_current_time_offset_for_testing(compute_current_time_offset_for_testing(m_disk_cache, m_request_headers))
+    , m_request_headers(HTTP::HeaderList::create())
+    , m_response_headers(HTTP::HeaderList::create())
 {
-    m_request_start_time += m_current_time_offset_for_testing;
 }
 
 Request::~Request()
@@ -123,10 +121,10 @@ Request::~Request()
         curl_slist_free_all(string_list);
 
     if (m_cache_entry_writer.has_value())
-        (void)m_cache_entry_writer->flush(move(m_response_headers));
+        (void)m_cache_entry_writer->flush(m_response_headers);
 }
 
-void Request::notify_request_unblocked(Badge<DiskCache>)
+void Request::notify_request_unblocked(Badge<HTTP::DiskCache>)
 {
     // FIXME: We may want a timer to limit how long we are waiting for a request before proceeding with a network
     //        request that skips the disk cache.
@@ -193,38 +191,40 @@ void Request::process()
 void Request::handle_initial_state()
 {
     if (m_disk_cache.has_value()) {
-        m_disk_cache->open_entry(*this).visit(
-            [&](Optional<CacheEntryReader&> cache_entry_reader) {
-                m_cache_entry_reader = cache_entry_reader;
+        m_disk_cache->open_entry(*this, m_url, m_method, m_request_headers)
+            .visit(
+                [&](Optional<HTTP::CacheEntryReader&> cache_entry_reader) {
+                    m_cache_entry_reader = cache_entry_reader;
 
-                if (m_cache_entry_reader.has_value()) {
-                    if (m_cache_entry_reader->must_revalidate())
-                        transition_to_state(State::DNSLookup);
-                    else
-                        transition_to_state(State::ReadCache);
-                }
-            },
-            [&](DiskCache::CacheHasOpenEntry) {
-                // If an existing entry is open for writing, we must wait for it to complete.
-                transition_to_state(State::WaitForCache);
-            });
+                    if (m_cache_entry_reader.has_value()) {
+                        if (m_cache_entry_reader->must_revalidate())
+                            transition_to_state(State::DNSLookup);
+                        else
+                            transition_to_state(State::ReadCache);
+                    }
+                },
+                [&](HTTP::DiskCache::CacheHasOpenEntry) {
+                    // If an existing entry is open for writing, we must wait for it to complete.
+                    transition_to_state(State::WaitForCache);
+                });
 
         if (m_state != State::Init)
             return;
 
-        m_disk_cache->create_entry(*this).visit(
-            [&](Optional<CacheEntryWriter&> cache_entry_writer) {
-                m_cache_entry_writer = cache_entry_writer;
+        m_disk_cache->create_entry(*this, m_url, m_method, m_request_headers, m_request_start_time)
+            .visit(
+                [&](Optional<HTTP::CacheEntryWriter&> cache_entry_writer) {
+                    m_cache_entry_writer = cache_entry_writer;
 
-                if (!m_cache_entry_writer.has_value())
-                    m_cache_status = CacheStatus::NotCached;
-            },
-            [&](DiskCache::CacheHasOpenEntry) {
-                // If an existing entry is open for reading or writing, we must wait for it to complete. An entry being
-                // open for reading is a rare case, but may occur if a cached response expired between the existing
-                // entry's cache validation and the attempted reader validation when this request was created.
-                transition_to_state(State::WaitForCache);
-            });
+                    if (!m_cache_entry_writer.has_value())
+                        m_cache_status = CacheStatus::NotCached;
+                },
+                [&](HTTP::DiskCache::CacheHasOpenEntry) {
+                    // If an existing entry is open for reading or writing, we must wait for it to complete. An entry being
+                    // open for reading is a rare case, but may occur if a cached response expired between the existing
+                    // entry's cache validation and the attempted reader validation when this request was created.
+                    transition_to_state(State::WaitForCache);
+                });
 
         if (m_state != State::Init)
             return;
@@ -361,13 +361,13 @@ void Request::handle_fetch_state()
 
         // CURLOPT_POSTFIELDS automatically sets the Content-Type header. Tell curl to remove it by setting a blank
         // value if the headers passed in don't contain a content type.
-        if (!m_request_headers.contains("Content-Type"sv))
+        if (!m_request_headers->contains("Content-Type"sv))
             curl_headers = curl_slist_append(curl_headers, "Content-Type:");
     } else if (m_method == "HEAD"sv) {
         set_option(CURLOPT_NOBODY, 1L);
     }
 
-    for (auto const& header : m_request_headers.headers()) {
+    for (auto const& header : *m_request_headers) {
         if (header.value.is_empty()) {
             // curl will discard the header unless we pass the header name followed by a semicolon (i.e. we need to pass
             // "Content-Type;" instead of "Content-Type: ").
@@ -382,7 +382,7 @@ void Request::handle_fetch_state()
     }
 
     if (is_revalidation_request) {
-        auto revalidation_attributes = RevalidationAttributes::create(m_cache_entry_reader->response_headers());
+        auto revalidation_attributes = HTTP::RevalidationAttributes::create(m_cache_entry_reader->response_headers());
         VERIFY(revalidation_attributes.etag.has_value() || revalidation_attributes.last_modified.has_value());
 
         if (revalidation_attributes.etag.has_value()) {
@@ -437,7 +437,7 @@ void Request::handle_complete_state()
         // a "close notify" alert. OpenSSL version 3.2 began treating this as an error, which curl translates to
         // CURLE_RECV_ERROR in the absence of a Content-Length response header. The Python server used by WPT is one
         // such server. We ignore this error if we were actually able to download some response data.
-        if (m_curl_result_code == CURLE_RECV_ERROR && m_bytes_transferred_to_client != 0 && !m_response_headers.contains("Content-Length"sv))
+        if (m_curl_result_code == CURLE_RECV_ERROR && m_bytes_transferred_to_client != 0 && !m_response_headers->contains("Content-Length"sv))
             m_curl_result_code = CURLE_OK;
 
         if (m_curl_result_code != CURLE_OK) {
@@ -493,7 +493,7 @@ size_t Request::on_header_received(void* buffer, size_t size, size_t nmemb, void
     if (auto colon_index = header_line.find(':'); colon_index.has_value()) {
         auto name = header_line.substring_view(0, *colon_index).trim_whitespace();
         auto value = header_line.substring_view(*colon_index + 1).trim_whitespace();
-        request.m_response_headers.set(name, value);
+        request.m_response_headers->append({ name, value });
     }
 
     return total_size;
@@ -509,14 +509,15 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
         if (request.revalidation_failed().is_error())
             return CURL_WRITEFUNC_ERROR;
 
-        request.m_disk_cache->create_entry(request).visit(
-            [&](Optional<CacheEntryWriter&> cache_entry_writer) {
-                request.m_cache_entry_writer = cache_entry_writer;
-            },
-            [&](DiskCache::CacheHasOpenEntry) {
-                // This should not be reachable, as cache revalidation holds an exclusive lock on the cache entry.
-                VERIFY_NOT_REACHED();
-            });
+        request.m_disk_cache->create_entry(request, request.m_url, request.m_method, request.m_request_headers, request.m_request_start_time)
+            .visit(
+                [&](Optional<HTTP::CacheEntryWriter&> cache_entry_writer) {
+                    request.m_cache_entry_writer = cache_entry_writer;
+                },
+                [&](HTTP::DiskCache::CacheHasOpenEntry) {
+                    // This should not be reachable, as cache revalidation holds an exclusive lock on the cache entry.
+                    VERIFY_NOT_REACHED();
+                });
     }
 
     request.transfer_headers_to_client_if_needed();
@@ -571,23 +572,23 @@ void Request::transfer_headers_to_client_if_needed()
         }
     }
 
-    if (m_disk_cache.has_value() && m_disk_cache->mode() == DiskCache::Mode::Testing) {
+    if (m_disk_cache.has_value() && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing) {
         switch (m_cache_status) {
         case CacheStatus::Unknown:
             break;
         case CacheStatus::NotCached:
-            m_response_headers.set(TEST_CACHE_STATUS_HEADER, "not-cached"sv);
+            m_response_headers->set({ HTTP::TEST_CACHE_STATUS_HEADER, "not-cached"sv });
             break;
         case CacheStatus::WrittenToCache:
-            m_response_headers.set(TEST_CACHE_STATUS_HEADER, "written-to-cache"sv);
+            m_response_headers->set({ HTTP::TEST_CACHE_STATUS_HEADER, "written-to-cache"sv });
             break;
         case CacheStatus::ReadFromCache:
-            m_response_headers.set(TEST_CACHE_STATUS_HEADER, "read-from-cache"sv);
+            m_response_headers->set({ HTTP::TEST_CACHE_STATUS_HEADER, "read-from-cache"sv });
             break;
         }
     }
 
-    m_client.async_headers_became_available(m_request_id, m_response_headers, m_status_code, m_reason_phrase);
+    m_client.async_headers_became_available(m_request_id, m_response_headers->headers(), m_status_code, m_reason_phrase);
 }
 
 ErrorOr<void> Request::write_queued_bytes_without_blocking()
