@@ -37,25 +37,40 @@ permissions:
   pull-requests: read # allows SonarQube to decorate PRs with analysis results
 
 jobs:
-  Analysis:
+  sonarcloud:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        id: setup-java
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
         with:
-          distribution: temurin
-          java-version: '17'
+          submodules: recursive
 
-      - name: Confirm Java version
+      - name: Install build dependencies
         run: |
-          java -version
-          echo "JAVA_HOME=$JAVA_HOME"
-          which java
+          sudo apt update
+          sudo apt install -y ninja-build clang cmake pkg-config libssl-dev
+
+      - name: Configure CMake (fast + export compile commands)
+        run: |
+          cmake -GNinja -B build \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON .
+
+      - name: Build only core Ladybird components (fast)
+        run: |
+          ninja -C build LibWeb LibJS LibGfx LibGUI
+
+   #   - name: Set up JDK 17
+   #     id: setup-java
+   #     uses: actions/setup-java@v4
+   #     with:
+   #       distribution: temurin
+   #       java-version: '17'
+
+   #   - name: Confirm Java version
+   #     run: |
+   #       java -version
+   #       echo "JAVA_HOME=$JAVA_HOME"
+   #       which java
 
       - name: Analyze with SonarQube
         # You can pin the exact commit or the version.
