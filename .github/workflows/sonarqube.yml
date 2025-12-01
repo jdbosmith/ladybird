@@ -46,11 +46,15 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Fetch third-party libraries
+        run: |
+          chmod +x Meta/refresh-third-party.sh  
+          Meta/refresh-third-party.sh
+
       - name: Install build dependencies
         run: |
           sudo apt update
           sudo apt install -y ninja-build clang cmake pkg-config libssl-dev libx11-dev libxext-dev libxrender-dev libgl1-mesa-dev g++
-
 
       - name: Configure CMake (fast + export compile commands)
         run: |
