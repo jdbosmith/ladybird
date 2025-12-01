@@ -46,6 +46,11 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Debug repo layout
+        run: |
+          echo "Repo root:"
+          ls -R .
+
       - name: Fetch third-party libraries
         run: |
           chmod +x Meta/Lagom/refresh-third-party.sh
