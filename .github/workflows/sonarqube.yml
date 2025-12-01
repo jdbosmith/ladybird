@@ -59,7 +59,7 @@ jobs:
           java -XshowSettings:properties -version 2>&1 | sed -n '1,20p'
    
       - name: Run SonarScanner (official Docker image)
-        uses: docker://sonarsource/sonar-scanner-cli:latest
+        uses: docker://sonarsource/sonar-scanner-cli:latest-java
         with:
           args: >
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
@@ -71,7 +71,7 @@ jobs:
 
       - name: Post-check
         run: echo "Sonar scan step finished."
-        
+
      # - name: Analyze with SonarQube
         # You can pin the exact commit or the version.
         # uses: SonarSource/sonarqube-scan-action@v1.1.0
