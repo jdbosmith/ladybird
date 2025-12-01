@@ -59,7 +59,7 @@ jobs:
           java -XshowSettings:properties -version 2>&1 | sed -n '1,20p'
    
       - name: Run SonarScanner (official Docker image)
-        uses: docker://sonarsource/sonar-scanner-cli:latest-java
+        uses: docker://sonarsource/sonar-scanner-cli:5.0.1-java17
         with:
           args: >
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
