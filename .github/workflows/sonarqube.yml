@@ -48,8 +48,8 @@ jobs:
 
       - name: Fetch third-party libraries
         run: |
-          chmod +x Meta/refresh-third-party.sh  
-          Meta/refresh-third-party.sh
+          chmod +x Meta/Lagom/refresh-third-party.sh
+          Meta/Lagom/refresh-third-party.sh
 
       - name: Install build dependencies
         run: |
