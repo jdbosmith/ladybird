@@ -70,11 +70,18 @@ jobs:
           # Try SIMDUTF package names; ignore if not found
           sudo apt-get install -y libsimdutf-dev || sudo apt-get install -y simdutf-dev || true
 
+      # Bootstrap vcpkg
+      - name: Bootstrap vcpkg
+        run: ./Build/vcpkg/bootstrap-vcpkg.sh
+
+      # Install vcpkg dependencies (uses vcpkg.json manifest)
+      - name: Install vcpkg dependencies
+        run: ./Build/vcpkg/vcpkg install
+
       - name: Configure CMake (fast + export compile commands)
-        env:
-          VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
         run: |
           cmake -B build -GNinja \
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/Build/vcpkg/scripts/buildsystems/vcpkg.cmake \
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
           -DCMAKE_C_COMPILER=clang \
           -DCMAKE_CXX_COMPILER=clang++ \
