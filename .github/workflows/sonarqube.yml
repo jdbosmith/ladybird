@@ -1,28 +1,10 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# This workflow helps you trigger a SonarQube analysis of your code and populates
-# GitHub Code Scanning alerts with the vulnerabilities found.
-# (this feature is available starting from SonarQube 9.7, Developer Edition and above)
-
-# 1. Make sure you add a valid GitHub configuration to your SonarQube (Administration > DevOps platforms > GitHub)
-
-# 2. Import your project on SonarQube
-#     * Add your repository as a new project by clicking "Create project" from your homepage.
+# SonarQube analysis (updated 2025-12-03)
+# - More robust vcpkg bootstrap: checks for repository-provided bootstrap script, falls back to Toolchain/BuildVcpkg.py,
+#   then falls back to cloning upstream vcpkg and bootstrapping.
+# - Ensures required system packages for vcpkg ports that need assemblers/kernel headers are installed (nasm/yasm/linux-libc-dev).
+# - Prints clearer diagnostics on failure.
 #
-# 3. Select GitHub Actions as your CI and follow the tutorial
-#     * a. Generate a new token and add it to your GitHub repository's secrets using the name SONAR_TOKEN
-#          (On SonarQube, click on your avatar on top-right > My account > Security or ask your administrator)
-#
-#     * b. Copy/paste your SonarQube host URL to your GitHub repository's secrets using the name SONAR_HOST_URL
-#
-#     * c. Copy/paste the project Key into the args parameter below
-#          (You'll find this information in SonarQube by following the tutorial or by clicking on Project Information at the top-right of your project's homepage)
-
-# Feel free to take a look at our documentation (https://docs.sonarqube.org/latest/analysis/github-integration/)
-# or reach out to our community forum if you need some help (https://community.sonarsource.com/c/sq/10)
+# Keep your SonarQube secrets (SONAR_TOKEN, SONAR_ORG, SONAR_PROJECT_KEY) set in repository settings.
 
 name: SonarQube analysis
 
@@ -48,8 +30,8 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential \
             cmake \
             pkg-config \
@@ -60,14 +42,80 @@ jobs:
             libxext-dev \
             libxrender-dev \
             libgl1-mesa-dev \
+            mesa-common-dev \
+            linux-libc-dev \
+            nasm \
+            yasm \
+            python3 \
+            python3-venv \
+            python3-distutils \
+            git \
+            curl \
             gcc \
             g++
 
-      - name: Bootstrap vcpkg
-        run: ./Build/vcpkg/bootstrap-vcpkg.sh
+      - name: Ensure vcpkg is present and bootstrapped
+        id: ensure-vcpkg
+        run: |
+          set -euo pipefail
+
+          echo "=== vcpkg bootstrap helper ==="
+
+          # Prefer an existing bootstrap script in the repo
+          if [ -x "./Build/vcpkg/bootstrap-vcpkg.sh" ]; then
+            echo "Found Build/vcpkg/bootstrap-vcpkg.sh — running it"
+            ./Build/vcpkg/bootstrap-vcpkg.sh
+            exit 0
+          fi
+
+          echo "No Build/vcpkg/bootstrap-vcpkg.sh found."
+
+          # If repository includes a helper script to build/pin vcpkg, use it
+          if [ -f "./Toolchain/BuildVcpkg.py" ]; then
+            echo "Found Toolchain/BuildVcpkg.py — invoking it to obtain vcpkg"
+            if command -v python3 >/dev/null 2>&1; then
+              python3 ./Toolchain/BuildVcpkg.py
+            else
+              python ./Toolchain/BuildVcpkg.py
+            fi
+
+            if [ -x "./Build/vcpkg/bootstrap-vcpkg.sh" ]; then
+              echo "vcpkg created successfully by Toolchain/BuildVcpkg.py — bootstrapping"
+              ./Build/vcpkg/bootstrap-vcpkg.sh
+              exit 0
+            else
+              echo "Toolchain/BuildVcpkg.py ran but Build/vcpkg/bootstrap-vcpkg.sh is still missing"
+            fi
+          else
+            echo "Toolchain/BuildVcpkg.py not present in the repository"
+          fi
+
+          # Fall back to cloning upstream vcpkg (last resort)
+          echo "Attempting to clone upstream vcpkg into Build/vcpkg and bootstrap it"
+          rm -rf Build/vcpkg || true
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git Build/vcpkg || {
+            echo "git clone of vcpkg failed"
+            exit 1
+          }
+
+          if [ -x "./Build/vcpkg/bootstrap-vcpkg.sh" ]; then
+            echo "Bootstrapping vcpkg from cloned repository"
+            ./Build/vcpkg/bootstrap-vcpkg.sh
+            exit 0
+          fi
+
+          echo "ERROR: Could not find or create Build/vcpkg/bootstrap-vcpkg.sh. Ensure vcpkg is provided by the repo or Toolchain/BuildVcpkg.py."
+          exit 1
 
       - name: Install vcpkg dependencies
-        run: ./Build/vcpkg/vcpkg install
+        run: |
+          if [ -x "./Build/vcpkg/vcpkg" ]; then
+            echo "Using Build/vcpkg/vcpkg to install dependencies"
+            ./Build/vcpkg/vcpkg install || ( echo "vcpkg install failed — see above"; exit 1 )
+          else
+            echo "vcpkg binary not found at Build/vcpkg/vcpkg; aborting"
+            exit 1
+          fi
 
       - name: Configure CMake
         run: |
