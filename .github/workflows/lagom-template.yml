@@ -168,6 +168,44 @@ jobs:
           fi
       # ---- end install step ----
 
+      # ---- Debug step: dump environment immediately after install ----
+      # Temporary — remove after collecting logs.
+      - name: Dump CI environment & tool versions (debug)
+        if: ${{ inputs.os_name == 'Linux' }}
+        run: |
+          set -euxo pipefail
+          echo "=== PATH ==="
+          echo "$PATH"
+          echo
+          echo "=== cmake version ==="
+          which cmake || true
+          cmake --version || true
+          echo
+          echo "=== ninja/gcc/clang/nasm/yasm versions and paths ==="
+          for cmd in ninja gcc g++ clang clang++ nasm yasm; do
+            echo
+            echo "---- $cmd ----"
+            which $cmd || true
+            $cmd --version 2>&1 | sed -n '1,5p' || true
+          done
+          echo
+          echo "=== environment vars of interest ==="
+          env | grep -E '^(CC|CXX|CMAKE_MAKE_PROGRAM|VCPKG|PATH)=' || true
+          echo
+          echo "=== current user and permissions ==="
+          id || true
+          ls -l $(which ninja 2>/dev/null || true) || true
+          ls -l $(which gcc 2>/dev/null || true) || true
+          ls -l $(which nasm 2>/dev/null || true) || true
+          echo
+          echo "=== Show vcpkg-manifest-install.log (if present) ==="
+          if [ -f "${{ github.workspace }}/Build/vcpkg-manifest-install.log" ]; then
+            sed -n '1,400p' "${{ github.workspace }}/Build/vcpkg-manifest-install.log" || true
+          else
+            echo "No Build/vcpkg-manifest-install.log present yet"
+          fi
+      # ---- end debug step ----
+
       - name: Set Up Environment
         uses: ./.github/actions/setup
         with:
@@ -314,6 +352,17 @@ jobs:
           ASAN_OPTIONS: 'log_path="${{ github.workspace }}/asan.log"'
           UBSAN_OPTIONS: 'log_path="${{ github.workspace }}/ubsan.log"'
 
+      - name: Lints
+        if: ${{ inputs.os_name == 'Linux' && inputs.build_preset == 'Sanitizer' }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -e
+          git ls-files '*.ipc' | xargs ./Build/bin/IPCMagicLinter
+        env:
+          ASAN_OPTIONS: 'strict_string_checks=1:check_initialization_order=1:strict_init_order=1:detect_stack_use_after_return=1:allocator_may_return_null=1'
+          UBSAN_OPTIONS: 'print_stacktrace=1:print_summary=1:halt_on_error=1'
+
+      # ---- Print vcpkg log to help debug failures ----
       - name: Print vcpkg manifest install log (if present)
         if: failure()
         run: |
