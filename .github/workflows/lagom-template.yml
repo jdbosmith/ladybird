@@ -1,3 +1,4 @@
+# PATCH: ensure nasm/yasm installed + debug dump - 2025-12-03 by copilot
 name: Lagom Template
 
 on:
@@ -41,9 +42,6 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
 
     steps:
-      # Pull requests can trail behind `master` and can cause breakage if merging before running the CI checks on an updated branch.
-      # Luckily, GitHub creates and maintains a merge branch that is updated whenever the target or source branch is modified. By
-      # checking this branch out, we gain a stabler `master` at the cost of reproducibility.
       - uses: actions/checkout@v6
         if: ${{ github.event_name != 'pull_request' }}
 
@@ -62,6 +60,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "PATCH MARKER: 2025-12-03 copilot — installing build deps and adding debug dump"
           echo "Installing/verifying build deps for toolchain: $TOOLCHAIN"
           echo "Diagnostics: uname / /etc/os-release / user"
           uname -a || true
@@ -91,6 +90,7 @@ jobs:
 
             echo "Installing via: $SUDO apt-get"
             $SUDO apt-get update -y
+
             # Include nasm and yasm (libvpx needs nasm), linux-libc-dev (for openssl), mesa-common-dev (for angle) etc.
             $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
               build-essential \
@@ -166,7 +166,24 @@ jobs:
             echo "CC=$(which gcc || which clang || true)" >> "$GITHUB_ENV"
             echo "CXX=$(which g++ || which clang++ || true)" >> "$GITHUB_ENV"
           fi
-      # ---- end install step ----
+
+      # ---- Debug dump (new, added immediately after install) ----
+      - name: Dump CI environment & tool versions (debug)
+        if: ${{ inputs.os_name == 'Linux' }}
+        run: |
+          echo "==== PATH ===="
+          echo "$PATH"
+          echo
+          echo "==== env (selected) ===="
+          env | egrep '^(CMAKE|CC=|CXX=|GITHUB|VCPKG|NINJA|LADYBIRD|CCACHE|PYTHON)' || true
+          echo
+          echo "==== which & versions ===="
+          which ninja || true; ninja --version || true
+          which nasm || true; nasm --version || true
+          which yasm || true; yasm --version || true
+          which gcc || true; gcc --version | head -n1 || true
+          which g++ || true; g++ --version | head -n1 || true
+          which clang || true; clang --version | head -n1 || true
 
       - name: Set Up Environment
         uses: ./.github/actions/setup
