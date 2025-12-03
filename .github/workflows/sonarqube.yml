@@ -54,17 +54,31 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config ninja-build clang libssl-dev libx11-dev libxext-dev libxrender-dev libgl1-mesa-dev g++
-
-      - name: Install vcpkg
-        run: ./Toolchain/BuildVcpkg.py
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          ninja-build \
+          clang \
+          libssl-dev \
+          libx11-dev \
+          libxext-dev \
+          libxrender-dev \
+          libgl1-mesa-dev \
+          gcc \
+          g++
+          # Try SIMDUTF package names; ignore if not found
+          sudo apt-get install -y libsimdutf-dev || sudo apt-get install -y simdutf-dev || true
 
       - name: Configure CMake (fast + export compile commands)
         env:
           VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
         run: |
-          cmake --preset Release -B build \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          cmake -B build -GNinja \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          .
 
       - name: Build only core Ladybird components (fast)
         run: |
