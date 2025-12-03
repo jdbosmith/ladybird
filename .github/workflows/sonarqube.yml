@@ -34,7 +34,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  pull-requests: read # allows SonarQube to decorate PRs with analysis results
+  pull-requests: read
 
 jobs:
   sonarcloud:
@@ -46,73 +46,48 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Debug repo layout
-        run: |
-          echo "Repo root:"
-          ls -R .
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          build-essential \
-          cmake \
-          pkg-config \
-          ninja-build \
-          clang \
-          libssl-dev \
-          libx11-dev \
-          libxext-dev \
-          libxrender-dev \
-          libgl1-mesa-dev \
-          gcc \
-          g++
-          # Try SIMDUTF package names; ignore if not found
-          sudo apt-get install -y libsimdutf-dev || sudo apt-get install -y simdutf-dev || true
+            build-essential \
+            cmake \
+            pkg-config \
+            ninja-build \
+            clang \
+            libssl-dev \
+            libx11-dev \
+            libxext-dev \
+            libxrender-dev \
+            libgl1-mesa-dev \
+            gcc \
+            g++
 
-      # Bootstrap vcpkg
       - name: Bootstrap vcpkg
         run: ./Build/vcpkg/bootstrap-vcpkg.sh
 
-      # Install vcpkg dependencies (uses vcpkg.json manifest)
       - name: Install vcpkg dependencies
         run: ./Build/vcpkg/vcpkg install
 
-      - name: Configure CMake (fast + export compile commands)
+      - name: Configure CMake
         run: |
           cmake -B build -GNinja \
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/Build/vcpkg/scripts/buildsystems/vcpkg.cmake \
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-          -DCMAKE_C_COMPILER=clang \
-          -DCMAKE_CXX_COMPILER=clang++ \
-          .
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/Build/vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            .
 
-      - name: Build only core Ladybird components (fast)
-        run: |
-          ninja -C build LibWeb LibJS LibGfx LibGUI
-
-   #   - name: Set up JDK 17
-   #     id: setup-java
-   #     uses: actions/setup-java@v4
-   #     with:
-   #       distribution: temurin
-   #       java-version: '17'
-
-   #   - name: Confirm Java version
-   #     run: |
-   #       java -version
-   #       echo "JAVA_HOME=$JAVA_HOME"
-   #       which java
+      - name: Build core Ladybird components
+        run: ninja -C build LibWeb LibJS LibGfx LibGUI
 
       - name: Analyze with SonarQube
-        # You can pin the exact commit or the version.
         uses: SonarSource/sonarqube-scan-action@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}   # Generate a token on SonarQube, add it to the secrets of this repo with the name SONAR_TOKEN (Settings > Secrets > Actions > add new repository secret)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
         with:
-          # Additional arguments for the sonarcloud scanner
           args: >
             -Dsonar.organization=${{ secrets.SONAR_ORG }}
             -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
