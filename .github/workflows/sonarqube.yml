@@ -71,6 +71,8 @@ jobs:
           sudo apt-get install -y libsimdutf-dev || sudo apt-get install -y simdutf-dev || true
 
       - name: Configure CMake (fast + export compile commands)
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
         run: |
           cmake -B build -GNinja \
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
