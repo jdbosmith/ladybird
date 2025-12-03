@@ -59,7 +59,40 @@ jobs:
           arch: ${{ inputs.arch }}
           toolchain: ${{ inputs.toolchain }}
 
-      # === PREPARE FOR BUILDING ===
+      # ---- Ensure system build tools are present on Linux runners ----
+      - name: Install system build dependencies (Linux)
+        if: ${{ inputs.os_name == 'Linux' }}
+        env:
+          TOOLCHAIN: ${{ inputs.toolchain }}
+        run: |
+          set -euo pipefail
+          echo "Installing build deps for toolchain: $TOOLCHAIN"
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential \
+            ninja-build \
+            pkg-config \
+            ca-certificates \
+            curl || true
+
+          if [ "$TOOLCHAIN" = "GNU" ]; then
+            # install gcc-14/g++-14 if available in the archive
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc-14 g++-14 || true
+          elif [ "$TOOLCHAIN" = "Clang" ]; then
+            # install clang-20 if available
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends clang-20 || true
+          fi
+
+          echo "---- tool availability ----"
+          echo "which ninja: $(which ninja || true)"
+          ninja --version || true
+          echo "which gcc: $(which gcc || true)"
+          gcc --version | head -n1 || true
+          echo "which g++: $(which g++ || true)"
+          g++ --version | head -n1 || true
+          echo "which clang: $(which clang || true)"
+          clang --version | head -n1 || true
+      # ---- end install step ----
 
       - name: Assign Build Parameters
         if: ${{ inputs.os_name != 'Windows' }}
@@ -239,3 +272,15 @@ jobs:
         env:
           ASAN_OPTIONS: 'strict_string_checks=1:check_initialization_order=1:strict_init_order=1:detect_stack_use_after_return=1:allocator_may_return_null=1'
           UBSAN_OPTIONS: 'print_stacktrace=1:print_summary=1:halt_on_error=1'
+
+      # ---- Print vcpkg log to help debug failures ----
+      - name: Print vcpkg manifest install log (if present)
+        if: failure()
+        run: |
+          logfile="${{ github.workspace }}/Build/vcpkg-manifest-install.log"
+          echo "==== vcpkg-manifest-install.log ===="
+          if [ -f "$logfile" ]; then
+            sed -n '1,400p' "$logfile" || true
+          else
+            echo "No $logfile found"
+          fi
