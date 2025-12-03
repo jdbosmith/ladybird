@@ -60,30 +60,67 @@ jobs:
           toolchain: ${{ inputs.toolchain }}
 
       # ---- Ensure system build tools are present on Linux runners ----
-      - name: Install system build dependencies (Linux)
+      - name: Install or verify system build dependencies (Linux)
         if: ${{ inputs.os_name == 'Linux' }}
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
           set -euo pipefail
-          echo "Installing build deps for toolchain: $TOOLCHAIN"
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential \
-            ninja-build \
-            pkg-config \
-            ca-certificates \
-            curl || true
 
-          if [ "$TOOLCHAIN" = "GNU" ]; then
-            # install gcc-14/g++-14 if available in the archive
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc-14 g++-14 || true
-          elif [ "$TOOLCHAIN" = "Clang" ]; then
-            # install clang-20 if available
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends clang-20 || true
+          echo "Installing/verifying build deps for toolchain: $TOOLCHAIN"
+          echo "Diagnostics: uname / etc/os-release / user"
+          uname -a || true
+          if [ -f /etc/os-release ]; then cat /etc/os-release || true; fi
+          echo "Effective UID: $(id -u)  User: $(id -un || true)"
+          echo "sudo available: $(command -v sudo >/dev/null 2>&1 && echo yes || echo no)"
+          echo "apt-get available: $(command -v apt-get >/dev/null 2>&1 && echo yes || echo no)"
+
+          # If apt-get present and we can run sudo (or we're root), perform install.
+          if command -v apt-get >/dev/null 2>&1; then
+            if sudo -n true >/dev/null 2>&1; then
+              SUDO='sudo'
+            elif [ "$(id -u)" -eq 0 ]; then
+              SUDO=''
+            else
+              echo "No passwordless sudo and not root. Cannot apt-install packages from this runner."
+              echo "This is likely a self-hosted runner that needs the build dependencies preinstalled."
+              echo "Required packages (Ubuntu/Debian):"
+              echo "  sudo apt-get update"
+              echo "  sudo apt-get install -y ninja-build build-essential pkg-config ca-certificates curl"
+              echo "Also install requested toolchain packages (example): gcc-14 g++-14 or clang-20"
+              echo "Failing early so CI logs show this explicit message."
+              exit 1
+            fi
+
+            echo "Installing via: $SUDO apt-get"
+            $SUDO apt-get update -y
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              build-essential \
+              ninja-build \
+              pkg-config \
+              ca-certificates \
+              curl || true
+
+            if [ "$TOOLCHAIN" = "GNU" ]; then
+              $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc-14 g++-14 || true
+            elif [ "$TOOLCHAIN" = "Clang" ]; then
+              $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends clang-20 || true
+            fi
+          else
+            # no apt-get present; likely a custom container or non-debian distro. Can't auto-install.
+            echo "apt-get not available on this runner (likely self-hosted/custom image)."
+            echo "Please ensure the following are installed on the runner image:"
+            echo "  - ninja-build (ninja)"
+            echo "  - a C toolchain (gcc/g++) or clang"
+            echo "  - pkg-config"
+            echo "If you control the runner, on Ubuntu run:"
+            echo "  sudo apt-get update"
+            echo "  sudo apt-get install -y ninja-build build-essential pkg-config ca-certificates"
+            echo "Additionally install the requested compiler versions such as gcc-14/g++-14 or clang-20."
+            exit 1
           fi
 
-          echo "---- tool availability ----"
+          echo "---- tool availability (post-install check) ----"
           echo "which ninja: $(which ninja || true)"
           ninja --version || true
           echo "which gcc: $(which gcc || true)"
