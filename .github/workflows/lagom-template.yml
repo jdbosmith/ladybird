@@ -41,9 +41,6 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
 
     steps:
-      # Pull requests can trail behind `master` and can cause breakage if merging before running the CI checks on an updated branch.
-      # Luckily, GitHub creates and maintains a merge branch that is updated whenever the target or source branch is modified. By
-      # checking this branch out, we gain a stabler `master` at the cost of reproducibility.
       - uses: actions/checkout@v6
         if: ${{ github.event_name != 'pull_request' }}
 
@@ -52,14 +49,8 @@ jobs:
         with:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
 
-      - name: Set Up Environment
-        uses: ./.github/actions/setup
-        with:
-          os: ${{ inputs.os_name }}
-          arch: ${{ inputs.arch }}
-          toolchain: ${{ inputs.toolchain }}
-
       # ---- Ensure system build tools are present on Linux runners ----
+      # Moved BEFORE Set Up Environment so any actions that run CMake/vcpkg can find Ninja/compilers.
       - name: Install or verify system build dependencies (Linux)
         if: ${{ inputs.os_name == 'Linux' }}
         env:
@@ -121,7 +112,8 @@ jobs:
           fi
 
           echo "---- tool availability (post-install check) ----"
-          echo "which ninja: $(which ninja || true)"
+          NINJA_PATH="$(which ninja 2>/dev/null || true)"
+          echo "which ninja: $NINJA_PATH"
           ninja --version || true
           echo "which gcc: $(which gcc || true)"
           gcc --version | head -n1 || true
@@ -129,7 +121,43 @@ jobs:
           g++ --version | head -n1 || true
           echo "which clang: $(which clang || true)"
           clang --version | head -n1 || true
+
+          # Export CMAKE_MAKE_PROGRAM and CC/CXX early so Set Up Environment or any action that runs CMake/vcpkg sees them.
+          if [ -n "$NINJA_PATH" ]; then
+            echo "CMAKE_MAKE_PROGRAM=$NINJA_PATH" >> "$GITHUB_ENV"
+          fi
+
+          # Export default CC/CXX based on requested toolchain to help vcpkg detect compilers early.
+          if [ "$TOOLCHAIN" = "GNU" ]; then
+            # prefer versioned compiler if installed, else fallback to gcc/g++
+            if command -v gcc-14 >/dev/null 2>&1; then
+              echo "CC=gcc-14" >> "$GITHUB_ENV"
+              echo "CXX=g++-14" >> "$GITHUB_ENV"
+            else
+              echo "CC=$(which gcc || true)" >> "$GITHUB_ENV"
+              echo "CXX=$(which g++ || true)" >> "$GITHUB_ENV"
+            fi
+          elif [ "$TOOLCHAIN" = "Clang" ]; then
+            if command -v clang-20 >/dev/null 2>&1; then
+              echo "CC=clang-20" >> "$GITHUB_ENV"
+              echo "CXX=clang++-20" >> "$GITHUB_ENV"
+            else
+              echo "CC=$(which clang || true)" >> "$GITHUB_ENV"
+              echo "CXX=$(which clang++ || true)" >> "$GITHUB_ENV"
+            fi
+          else
+            # generic fallback
+            echo "CC=$(which gcc || which clang || true)" >> "$GITHUB_ENV"
+            echo "CXX=$(which g++ || which clang++ || true)" >> "$GITHUB_ENV"
+          fi
       # ---- end install step ----
+
+      - name: Set Up Environment
+        uses: ./.github/actions/setup
+        with:
+          os: ${{ inputs.os_name }}
+          arch: ${{ inputs.arch }}
+          toolchain: ${{ inputs.toolchain }}
 
       - name: Assign Build Parameters
         if: ${{ inputs.os_name != 'Windows' }}
@@ -259,8 +287,6 @@ jobs:
           ccache_primary_key: ${{ steps.cache-restore.outputs.ccache_primary_key }}
           vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
           vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
-
-      # === TEST ===
 
       - name: Test
         if: ${{ contains(inputs.build_preset, 'Sanitizer') }}
