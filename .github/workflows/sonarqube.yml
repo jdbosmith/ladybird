@@ -54,19 +54,29 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config
-          # Try known package names; ignore error if not present so we can fall back
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          build-essential \
+          cmake \
+          pkg-config \
+          ninja-build \
+          clang \
+          libssl-dev \
+          libx11-dev \
+          libxext-dev \
+          libxrender-dev \
+          libgl1-mesa-dev \
+          gcc \
+          g++
+          # Try SIMDUTF package names; ignore if not found
           sudo apt-get install -y libsimdutf-dev || sudo apt-get install -y simdutf-dev || true
-          
-      - name: Install build dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y ninja-build clang cmake pkg-config libssl-dev libx11-dev libxext-dev libxrender-dev libgl1-mesa-dev g++
 
       - name: Configure CMake (fast + export compile commands)
         run: |
-          cmake -GNinja -B build \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON .
+          cmake -B build -GNinja \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          .
 
       - name: Build only core Ladybird components (fast)
         run: |
