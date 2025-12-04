@@ -1,10 +1,8 @@
-# SonarQube analysis (updated 2025-12-03)
-# - More robust vcpkg bootstrap: checks for repository-provided bootstrap script, falls back to Toolchain/BuildVcpkg.py,
-#   then falls back to cloning upstream vcpkg and bootstrapping.
-# - Ensures required system packages for vcpkg ports that need assemblers/kernel headers are installed (nasm/yasm/linux-libc-dev).
-# - Prints clearer diagnostics on failure.
-#
-# Keep your SonarQube secrets (SONAR_TOKEN, SONAR_ORG, SONAR_PROJECT_KEY) set in repository settings.
+# SonarQube analysis (updated 2025-12-04)
+# - Robust vcpkg bootstrap (repo-provided -> Toolchain/BuildVcpkg.py -> clone upstream)
+# - Installs nasm/yasm/linux headers/mesa dev as before
+# - Fixes python3-distutils failure on Ubuntu 24.04 by attempting the distro-specific distutils package
+#   (python3.<minor>-distutils) and falling back to installing python3-setuptools + python3-pip if needed.
 
 name: SonarQube analysis
 
@@ -28,8 +26,9 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Install system dependencies
+      - name: Install system dependencies (with Python distutils handling)
         run: |
+          set -euo pipefail
           sudo apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential \
@@ -48,11 +47,39 @@ jobs:
             yasm \
             python3 \
             python3-venv \
-            python3-distutils \
+            python3-pip \
+            python3-setuptools \
             git \
             curl \
             gcc \
-            g++
+            g++ \
+            || true
+
+          # Ensure distutils is importable. On some Ubuntu images python3-distutils is provided as python3.<minor>-distutils
+          if python3 -c "import importlib,sys; importlib.import_module('distutils')" 2>/dev/null; then
+            echo "python3.distutils is available"
+          else
+            echo "python3.distutils not available — trying to install python3.<major>.<minor>-distutils package"
+            PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+            PKG="python${PYVER}-distutils"
+            echo "Attempting apt-get install $PKG"
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$PKG" || true
+
+            if python3 -c "import importlib,sys; importlib.import_module('distutils')" 2>/dev/null; then
+              echo "Successfully installed $PKG and can import distutils"
+            else
+              echo "Could not install $PKG or distutils still not importable. Installing python3-setuptools and ensuring pip is available as fallback."
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-setuptools python3-pip || true
+              # try to ensure pip packages that some scripts rely on are present
+              python3 -m pip install --upgrade --user setuptools wheel || true
+
+              if python3 -c "import importlib,sys; importlib.import_module('distutils')" 2>/dev/null; then
+                echo "distutils importable after setuptools/pip fallback"
+              else
+                echo "WARNING: distutils still not importable. Some bootstrap scripts may still fail. Proceeding and hoping Toolchain/BuildVcpkg.py or cloned vcpkg can work without it."
+              fi
+            fi
+          fi
 
       - name: Ensure vcpkg is present and bootstrapped
         id: ensure-vcpkg
