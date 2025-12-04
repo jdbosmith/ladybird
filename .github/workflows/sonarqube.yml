@@ -19,6 +19,9 @@ permissions:
 jobs:
   sonarcloud:
     runs-on: ubuntu-latest
+    env:
+      TRIPLET: x64-linux
+      VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
 
     steps:
       - uses: actions/checkout@v4
@@ -135,14 +138,38 @@ jobs:
           exit 1
 
       - name: Install vcpkg dependencies
+        env:
+          TRIPLET: ${{ env.TRIPLET }}
         run: |
-          if [ -x "./Build/vcpkg/vcpkg" ]; then
-            echo "Using Build/vcpkg/vcpkg to install dependencies"
-            ./Build/vcpkg/vcpkg install || ( echo "vcpkg install failed — see above"; exit 1 )
-          else
-            echo "vcpkg binary not found at Build/vcpkg/vcpkg; aborting"
+          set -euo pipefail
+          VCPKG_BIN=./Build/vcpkg/vcpkg
+
+          if [ ! -x "${VCPKG_BIN}" ]; then
+            echo "vcpkg binary not found at ${VCPKG_BIN}; aborting"
+            ls -la Build/vcpkg || true
             exit 1
           fi
+
+          echo "vcpkg version:"
+          ${VCPKG_BIN} --version
+
+          # If a manifest is present, prefer manifest install so pins in vcpkg.json are respected.
+          if [ -f vcpkg.json ]; then
+            echo "Installing vcpkg manifest dependencies (vcpkg.json) for triplet ${TRIPLET}"
+            ${VCPKG_BIN} install --triplet ${TRIPLET} || ( echo "vcpkg manifest install failed"; ${VCPKG_BIN} list; exit 1 )
+          else
+            # Fallback: explicitly install Qt6 ports that LibWeb (and other targets) require.
+            # Adjust the list below if your project requires additional Qt ports.
+            echo "No vcpkg.json found; installing Qt6 ports explicitly into vcpkg for triplet ${TRIPLET}"
+            ${VCPKG_BIN} install qt6-base:${TRIPLET} qt6-webengine:${TRIPLET} || ( echo "vcpkg install of Qt6 ports failed"; ${VCPKG_BIN} list; exit 1 )
+          fi
+
+          # Basic diagnostics to ensure Qt6 CMake config files are present for CMake
+          echo "vcpkg installed ports:"
+          ${VCPKG_BIN} list || true
+          echo "Installed cmake config dirs:"
+          ls -la Build/vcpkg/installed/${TRIPLET}/lib/cmake || true
+          find Build/vcpkg/installed/${TRIPLET} -name "Qt6CoreConfig.cmake" -print || true
 
       - name: Configure CMake
         run: |
