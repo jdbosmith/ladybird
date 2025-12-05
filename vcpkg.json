@@ -159,6 +159,12 @@
       "platform": "windows"
     },
     {
+      "name": "qt6-base"
+    },
+    {
+      "name": "qt6-webengine"
+    },
+    {
       "name": "sdl3",
       "default-features": false
     },
