@@ -8,9 +8,9 @@ name: SonarQube analysis
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["master"]
   pull_request:
-    branches: [ "master" ]
+    branches: ["master"]
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,6 @@ jobs:
     env:
       TRIPLET: x64-linux
       VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,7 +72,6 @@ jobs:
             else
               echo "Could not install $PKG or distutils still not importable. Installing python3-setuptools and ensuring pip is available as fallback."
               sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-setuptools python3-pip || true
-              # try to ensure pip packages that some scripts rely on are present
               python3 -m pip install --upgrade --user setuptools wheel || true
 
               if python3 -c "import importlib,sys; importlib.import_module('distutils')" 2>/dev/null; then
@@ -181,7 +179,8 @@ jobs:
             .
 
       - name: Build core Ladybird components
-        run: ninja -C build LibWeb LibJS LibGfx LibGUI
+        run: |
+          ninja -C build LibWeb LibJS LibGfx LibGUI
 
       - name: Analyze with SonarQube
         uses: SonarSource/sonarqube-scan-action@v2
