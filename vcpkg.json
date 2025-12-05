@@ -110,6 +110,32 @@
     "openssl",
     {
       "name": "qtbase",
+      "platform": "linux",
+      "default-features": false,
+      "features": [
+        "dbus",
+        "doubleconversion",
+        "fontconfig",
+        "freetype",
+        "gui",
+        "icu",
+        "jpeg",
+        "network",
+        "opengl",
+        "pcre2",
+        "png",
+        "thread",
+        "vulkan",
+        "widgets",
+        "xcb",
+        "xcb-xlib",
+        "xlib",
+        "xrender",
+        "zstd"
+      ]
+    },
+    {
+      "name": "qtbase",
       "platform": "freebsd",
       "default-features": false,
       "features": [
@@ -153,6 +179,10 @@
         "widgets",
         "zstd"
       ]
+    },
+    {
+      "name": "qtwebengine",
+      "platform": "linux"
     },
     {
       "name": "pthread",
@@ -289,6 +319,10 @@
     {
       "name": "qtbase",
       "version": "6.8.3#2"
+    },
+    {
+      "name": "qtwebengine",
+      "version": "6.8.3#0"
     },
     {
       "name": "sdl3",

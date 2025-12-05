@@ -22,6 +22,7 @@ jobs:
     env:
       TRIPLET: x64-linux
       VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
+      VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/Meta/CMake/vcpkg/overlay-ports
 
     steps:
       - uses: actions/checkout@v4
