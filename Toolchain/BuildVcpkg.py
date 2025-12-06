@@ -9,7 +9,7 @@ import json
 import os
 import pathlib
 import subprocess
-import shutil
+
 
 
 def build_vcpkg():
@@ -25,25 +25,39 @@ def build_vcpkg():
     build_dir.mkdir(parents=True, exist_ok=True)
     vcpkg_checkout = build_dir / "vcpkg"
 
-    if not vcpkg_checkout.is_dir():
-        subprocess.check_call(args=["git", "clone", git_repo], cwd=build_dir)
-    else:
-        bootstrapped_vcpkg_version = (
-            subprocess.check_output(["git", "-C", vcpkg_checkout, "rev-parse", "HEAD"]).strip().decode()
-        )
+ # Always start with a fresh checkout to avoid stale/partial repos causing git errors
+if vcpkg_checkout.is_dir():
+    print(f"Removing existing {vcpkg_checkout} to ensure fresh clone")
+    shutil.rmtree(vcpkg_checkout)
 
-        if bootstrapped_vcpkg_version == git_rev:
-            return
-
-    print(f"Building vcpkg@{git_rev}")
-
-    # Try to fetch only the requested revision first (faster)
+# Attempt a shallow clone and a targeted fetch for the requested revision (fast path).
+# If any step fails, fall back to a full clone so all git objects are available.
+try:
+    subprocess.check_call(args=["git", "clone", "--depth", "1", git_repo, str(vcpkg_checkout)], cwd=build_dir)
     try:
         subprocess.check_call(args=["git", "fetch", "--depth", "1", "origin", git_rev], cwd=vcpkg_checkout)
     except subprocess.CalledProcessError:
-        # If that fails, fallback to a full fetch so the commit can be found
-        print(f"Warning: shallow fetch of {git_rev} failed; fetching full origin")
+        print(f"Warning: targeted shallow fetch of {git_rev} failed; attempting to unshallow/fetch full history")
+        subprocess.check_call(args=["git", "fetch", "--unshallow", "origin"], cwd=vcpkg_checkout)
         subprocess.check_call(args=["git", "fetch", "origin"], cwd=vcpkg_checkout)
+except subprocess.CalledProcessError:
+    # If shallow clone failed for any reason, do a full clone
+    if vcpkg_checkout.is_dir():
+        shutil.rmtree(vcpkg_checkout)
+    print("Shallow clone failed; performing full clone of vcpkg")
+    subprocess.check_call(args=["git", "clone", git_repo, str(vcpkg_checkout)], cwd=build_dir)
+
+# Ensure the working tree is clean before attempting checkout
+subprocess.check_call(args=["git", "reset", "--hard"], cwd=vcpkg_checkout)
+subprocess.check_call(args=["git", "clean", "-fdx"], cwd=vcpkg_checkout)
+
+# Try to checkout the exact requested revision. If it fails, fetch all refs and retry.
+try:
+    subprocess.check_call(args=["git", "checkout", git_rev], cwd=vcpkg_checkout)
+except subprocess.CalledProcessError:
+    print(f"Warning: checkout of {git_rev} failed; fetching all refs and retrying")
+    subprocess.check_call(args=["git", "fetch", "origin"], cwd=vcpkg_checkout)
+    subprocess.check_call(args=["git", "checkout", git_rev], cwd=vcpkg_checkout)
 
     # Try to checkout the requested revision. If it's still not available, fall back to origin/master (or origin/main).
     try:
