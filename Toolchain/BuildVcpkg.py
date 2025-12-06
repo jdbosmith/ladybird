@@ -36,8 +36,29 @@ def build_vcpkg():
 
     print(f"Building vcpkg@{git_rev}")
 
-    subprocess.check_call(args=["git", "fetch", "origin"], cwd=vcpkg_checkout)
-    subprocess.check_call(args=["git", "checkout", git_rev], cwd=vcpkg_checkout)
+    # Try to fetch only the requested revision first (faster)
+    try:
+        subprocess.check_call(args=["git", "fetch", "--depth", "1", "origin", git_rev], cwd=vcpkg_checkout)
+    except subprocess.CalledProcessError:
+        # If that fails, fallback to a full fetch so the commit can be found
+        print(f"Warning: shallow fetch of {git_rev} failed; fetching full origin")
+        subprocess.check_call(args=["git", "fetch", "origin"], cwd=vcpkg_checkout)
+
+    # Try to checkout the requested revision. If it's still not available, fall back to origin/master (or origin/main).
+    try:
+        subprocess.check_call(args=["git", "checkout", git_rev], cwd=vcpkg_checkout)
+    except subprocess.CalledProcessError:
+        print(f"Warning: requested vcpkg revision {git_rev} not found after fetch; falling back to origin/master")
+        # Try common default branches to maximise chance of success
+        for branch in ("origin/master", "origin/main"):
+            try:
+                subprocess.check_call(args=["git", "checkout", branch], cwd=vcpkg_checkout)
+                break
+            except subprocess.CalledProcessError:
+                continue
+        else:
+            # If no fallback branch worked, propagate the original error
+            raise
 
     bootstrap_script = "bootstrap-vcpkg.bat" if os.name == "nt" else "bootstrap-vcpkg.sh"
     subprocess.check_call(args=[vcpkg_checkout / bootstrap_script, "-disableMetrics"], cwd=vcpkg_checkout)
