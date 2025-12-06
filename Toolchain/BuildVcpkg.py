@@ -9,7 +9,7 @@ import json
 import os
 import pathlib
 import subprocess
-
+import shutil
 
 
 def build_vcpkg():
